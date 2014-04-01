@@ -1,0 +1,101 @@
+/*
+ * To change this template, choose Tools | Templates
+ * and open the template in the editor.
+ */
+package uk.ac.surrey.ee.ccsr.fiware.ngsi9.standard;
+
+import eu.fiware.iot.ngsi.*;
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import javax.servlet.ServletContext;
+import javax.xml.bind.JAXBException;
+import org.restlet.data.MediaType;
+import org.restlet.representation.Representation;
+import org.restlet.representation.StringRepresentation;
+import org.restlet.resource.Post;
+import org.restlet.resource.ResourceException;
+import org.restlet.resource.ServerResource;
+import uk.ac.surrey.ee.ccsr.fiware.ngsi9.marshalling.UpdateSubsMarshaller;
+import uk.ac.surrey.ee.ccsr.fiware.ngsi9.storage.db4o.SubscriptionStoreAccess;
+
+/**
+ * Resource which has only one representation.
+ */
+public class Resource04_AvailabilitySubscriptionUpdate extends ServerResource {
+
+    @Post
+    public Representation subscribeToDescription(Representation entity) throws ResourceException, IOException, JAXBException {
+
+        InputStream description = new ByteArrayInputStream(entity.getText().getBytes());
+        String respMsg = subscribeToContext(description);
+
+        System.out.println(respMsg);
+        StringRepresentation result = new StringRepresentation(respMsg);
+        result.setMediaType(MediaType.APPLICATION_XML);
+        return result;
+    }
+
+    public String subscribeToContext(InputStream description) throws ResourceException, IOException, JAXBException {
+
+        ServletContext context = (ServletContext) getContext().getServerDispatcher().getContext().getAttributes().get("org.restlet.ext.servlet.ServletContext");
+
+        StatusCode sc = new StatusCode(200, "OK", "Stored");
+
+        UpdateSubsMarshaller updSubMar = new UpdateSubsMarshaller();
+        UpdateContextAvailabilitySubscriptionRequest req = new UpdateContextAvailabilitySubscriptionRequest();
+        UpdateContextAvailabilitySubscriptionResponse subResp = new UpdateContextAvailabilitySubscriptionResponse();
+
+        //unmarshall XML request
+        try {
+            req = updSubMar.unmarshallRequest(description);
+            System.out.println("Receievd XML Request: \n" + updSubMar.marshallRequest(req));
+        } catch (JAXBException je) {
+            //Error with XML structure
+            Logger.getLogger(Resource03_AvailabilitySubscription.class.getName()).log(Level.SEVERE, null, je);
+            sc = new StatusCode(400, "Bad Request", "Error in XML structure");
+            subResp.setErrorCode(sc);
+            String respMsg = null;
+            try {
+                respMsg = updSubMar.marshallResponse(subResp);
+            } catch (JAXBException ex2) {
+                Logger.getLogger(Resource03_AvailabilitySubscription.class.getName()).log(Level.SEVERE, null, ex2);
+            }
+            System.out.println("Respose To Send: \n" + respMsg);
+            return respMsg;
+        }
+
+        //if subs ID is provided then attempt update -> delete, then register
+        //store request
+        try {
+            
+            String subId = req.getSubscriptionId();
+            if (subId.startsWith("UniS_")) {
+                SubscriptionStoreAccess ss = new SubscriptionStoreAccess(context);
+                ss.openDb4o();
+                boolean updated = ss.updateSubscription(req);
+                ss.closeDb4o();
+                if (!updated) {
+                    sc = new StatusCode(404, "Subscription Not Found", "result");
+                    req.setSubscriptionId("");
+                }
+            }
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            sc = new StatusCode(500, "Internal Error", "result");
+        }
+
+        subResp.setErrorCode(sc);
+        subResp.setSubscriptionId(req.getSubscriptionId());
+        subResp.setDuration(req.getDuration());
+        String regRespMsg = null;
+        regRespMsg = updSubMar.marshallResponse(subResp);
+
+        return regRespMsg;
+
+    }
+
+}
